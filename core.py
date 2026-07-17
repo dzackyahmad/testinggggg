@@ -12,7 +12,6 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 PUBLIC_RATIO = 0.30
 
@@ -231,10 +230,11 @@ def calculate_metrics(df: pd.DataFrame) -> dict[str, float]:
 
     a = df["aktual"].to_numpy(dtype="float64")
     p = df["prediksi"].to_numpy(dtype="float64")
+    err = a - p
     return {
         "n": int(len(df)),
-        "rmse": float(np.sqrt(mean_squared_error(a, p))),
-        "mae": float(mean_absolute_error(a, p)),
+        "rmse": float(np.sqrt(np.mean(err**2))),
+        "mae": float(np.mean(np.abs(err))),
         "mean_aktual": float(a.mean()),
         "mean_prediksi": float(p.mean()),
         "std_aktual": float(a.std(ddof=1)) if len(a) > 1 else 0.0,
