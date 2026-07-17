@@ -20,7 +20,6 @@ from core import (
     load_csv,
     merge_ground_truth_submission,
     top_errors,
-    validate_submission,
 )
 from plots import (
     plot_actual_vs_prediction,
@@ -71,11 +70,21 @@ def gabung(gt: pd.DataFrame, sub: pd.DataFrame, a: str, b: str, c: str, d: str):
     return merge_ground_truth_submission(gt, sub, a, b, c, d)
 
 
+TOLERANSI = 0.01  # skor dapat meleset hingga ±0,01 (tidak kurang, tidak lebih)
+
+
 def kartu_metrik(m: dict[str, float], prefix: str = "") -> None:
-    """Metric cards: RMSE, MAE, jumlah data, mean & std."""
+    """Metric cards: RMSE, MAE, jumlah data, mean & std, + estimasi rentang skor."""
+    rmse_lo, rmse_hi = max(m["rmse"] - TOLERANSI, 0.0), m["rmse"] + TOLERANSI
+    mae_lo, mae_hi = max(m["mae"] - TOLERANSI, 0.0), m["mae"] + TOLERANSI
+
     a, b, c = st.columns(3)
-    a.metric(f"{prefix}RMSE", f"{m['rmse']:.4f} m", help="Penalti lebih besar untuk error besar. Makin kecil makin baik.")
-    b.metric(f"{prefix}MAE", f"{m['mae']:.4f} m", help="Rata-rata absolute error. Makin kecil makin baik.")
+    a.metric(f"{prefix}RMSE", f"{m['rmse']:.4f} m",
+             help="Penalti lebih besar untuk error besar. Makin kecil makin baik.")
+    a.caption(f"± {TOLERANSI:.2f} → {rmse_lo:.4f} – {rmse_hi:.4f} m")
+    b.metric(f"{prefix}MAE", f"{m['mae']:.4f} m",
+             help="Rata-rata absolute error. Makin kecil makin baik.")
+    b.caption(f"± {TOLERANSI:.2f} → {mae_lo:.4f} – {mae_hi:.4f} m")
     c.metric("Data dievaluasi", f"{m['n']:,}")
 
     d, e, f, g = st.columns(4)
@@ -83,6 +92,11 @@ def kartu_metrik(m: dict[str, float], prefix: str = "") -> None:
     e.metric("Rata-rata prediksi", f"{m['mean_prediksi']:.3f} m")
     f.metric("Std dev aktual", f"{m['std_aktual']:.3f} m")
     g.metric("Std dev prediksi", f"{m['std_prediksi']:.3f} m")
+    st.caption(
+        f"ℹ️ Skor dapat meleset hingga ±{TOLERANSI:.2f} (tidak kurang, tidak lebih). "
+        f"Estimasi rentang di atas adalah skor terbaik (−{TOLERANSI:.2f}) hingga "
+        f"terburuk (+{TOLERANSI:.2f})."
+    )
 
 
 def tabel_pos(per_pos: pd.DataFrame):
@@ -109,8 +123,8 @@ def analisis(data: pd.DataFrame, ada_waktu: bool, key: str) -> None:
 
     with t1:
         a, b = st.columns(2)
-        a.plotly_chart(plot_actual_vs_prediction(data), width="stretch", key=f"{key}_sc")
-        b.plotly_chart(plot_residual_distribution(data), width="stretch", key=f"{key}_rd")
+        a.pyplot(plot_actual_vs_prediction(data))
+        b.pyplot(plot_residual_distribution(data))
 
     with t2:
         if not ada_waktu:
@@ -119,7 +133,7 @@ def analisis(data: pd.DataFrame, ada_waktu: bool, key: str) -> None:
             pos = sorted(data["pos"].astype(str).unique())
             pilih = st.multiselect("Pos pemantauan (maks. 4 panel)", pos,
                                    default=pos[:2], key=f"{key}_pos")
-            st.plotly_chart(plot_time_series(data, pilih), width="stretch", key=f"{key}_ts")
+            st.pyplot(plot_time_series(data, pilih))
 
     with t3:
         st.caption("🟥 error tertinggi · 🟩 error terendah")
@@ -128,13 +142,13 @@ def analisis(data: pd.DataFrame, ada_waktu: bool, key: str) -> None:
                            per_pos.to_csv(index=False).encode(),
                            "metrik_per_pos.csv", "text/csv", key=f"{key}_dl")
         a, b = st.columns(2)
-        a.plotly_chart(plot_station_metrics(per_pos, "rmse"), width="stretch", key=f"{key}_br")
-        b.plotly_chart(plot_station_metrics(per_pos, "mae"), width="stretch", key=f"{key}_bm")
+        a.pyplot(plot_station_metrics(per_pos, "rmse"))
+        b.pyplot(plot_station_metrics(per_pos, "mae"))
 
     with t4:
         st.caption("Residual = aktual − prediksi")
         sepuluh = top_errors(data, 10)
-        st.plotly_chart(plot_top_errors(sepuluh), width="stretch", key=f"{key}_te")
+        st.pyplot(plot_top_errors(sepuluh))
         st.dataframe(sepuluh, width="stretch", hide_index=True)
 
 
@@ -151,14 +165,13 @@ st.caption(
 with st.sidebar:
     st.header("⚙️ Konfigurasi")
     mode = st.radio("Mode evaluasi", ["Full Analysis", "Kaggle-Style"])
-    split_method = "chrono_global"
-    tampil_private = "Sembunyikan"
+    split_method = "random_global"  # default Kaggle: random seed 42
     if mode == "Full Analysis":
         st.caption("Memakai **seluruh** ground truth untuk evaluasi.")
     else:
         st.caption(
             f"Split {PUBLIC_RATIO:.0%} **public** / {1 - PUBLIC_RATIO:.0%} **private**. "
-            "Pilih metode pembagian di bawah."
+            "Public & private score selalu ditampilkan."
         )
         split_method = st.radio(
             "Metode split",
@@ -170,7 +183,6 @@ with st.sidebar:
                 "(reproducible); **kronologis** memakai waktu paling awal."
             ),
         )
-        tampil_private = st.radio("Private score", ["Sembunyikan", "Tampilkan"])
 
 # ---------------------------------------------------------------------------
 # Upload
@@ -222,27 +234,12 @@ b.dataframe(sub_df.head(5), width="stretch", hide_index=True)
 st.caption(f"Kolom terdeteksi — identifier: `{id_gt}` / `{id_sub}` · "
            f"aktual: `{col_aktual}` · prediksi: `{col_pred}`")
 
-# ---------------------------------------------------------------------------
-# Validasi
-# ---------------------------------------------------------------------------
-
-st.subheader("2 · Validasi")
-lap = validate_submission(gt_df, sub_df, id_gt, id_sub, col_pred)
-
-for pesan in lap.errors:
-    st.error(f"❌ {pesan}")
-for pesan in lap.warnings:
-    st.warning(f"⚠️ {pesan}")
-
-if not lap.ok:
-    st.error("**Evaluasi dihentikan.** Perbaiki submission lalu unggah ulang.")
-    st.stop()
-
-st.success(f"✅ {lap.n_cocok:,} identifier cocok dan siap dievaluasi.")
-
 data = gabung(gt_df, sub_df, id_gt, id_sub, col_aktual, col_pred)
 if data.empty:
-    st.error("Hasil merge kosong — tidak ada baris dengan identifier cocok dan nilai numerik.")
+    st.error(
+        "Tidak ada baris yang dapat dievaluasi — pastikan kolom `id` submission cocok "
+        "dengan ground truth dan nilai prediksi berupa angka."
+    )
     st.stop()
 
 ada_waktu = bool(data["waktu"].notna().any())
@@ -257,7 +254,7 @@ if not ada_waktu and mode == "Kaggle-Style" and split_method.startswith("chrono"
 # Evaluasi
 # ---------------------------------------------------------------------------
 
-st.subheader("3 · Hasil evaluasi")
+st.subheader("2 · Hasil evaluasi")
 
 if mode == "Full Analysis":
     kartu_metrik(calculate_metrics(data))
@@ -297,32 +294,23 @@ else:
     st.markdown("#### 🔵 Public score")
     kartu_metrik(calculate_metrics(pub), prefix="Public ")
 
-    st.markdown("#### 🔒 Private score")
-    if tampil_private == "Tampilkan":
-        m_pub = calculate_metrics(pub)
-        m_pri = calculate_metrics(pri)
-        kartu_metrik(m_pri, prefix="Private ")
-        selisih = m_pri["rmse"] - m_pub["rmse"]
-        if abs(selisih) > 0.15 * max(m_pub["rmse"], 1e-9):
-            st.warning(f"⚠️ Private RMSE berbeda {selisih:+.4f} m dari public — indikasi shake-up.")
-        else:
-            st.success(f"✅ Public & private RMSE konsisten (selisih {selisih:+.4f} m).")
+    st.markdown("#### 🔴 Private score")
+    m_pub = calculate_metrics(pub)
+    m_pri = calculate_metrics(pri)
+    kartu_metrik(m_pri, prefix="Private ")
+    selisih = m_pri["rmse"] - m_pub["rmse"]
+    if abs(selisih) > 0.15 * max(m_pub["rmse"], 1e-9):
+        st.warning(f"⚠️ Private RMSE berbeda {selisih:+.4f} m dari public — indikasi shake-up.")
     else:
-        st.markdown(
-            f'<div class="locked">🔒 <b>Private score disembunyikan.</b><br>'
-            f"{len(pri):,} baris ({len(pri) / len(d):.0%} ground truth) dipakai sebagai "
-            "private evaluation.</div>",
-            unsafe_allow_html=True,
-        )
+        st.success(f"✅ Public & private RMSE konsisten (selisih {selisih:+.4f} m).")
 
     st.divider()
     st.markdown("#### Analisis data public")
     analisis(pub, ada_waktu, "pub")
 
-    if tampil_private == "Tampilkan":
-        st.divider()
-        st.markdown("#### Analisis data private")
-        analisis(pri, ada_waktu, "pri")
+    st.divider()
+    st.markdown("#### Analisis data private")
+    analisis(pri, ada_waktu, "pri")
 
 st.divider()
 st.caption(

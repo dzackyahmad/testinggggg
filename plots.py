@@ -1,203 +1,240 @@
-"""Visualisasi Plotly untuk evaluasi TMA.
+"""Visualisasi TMA sebagai gambar statis (matplotlib).
 
-Palet sudah divalidasi colorblind-safe: biru = aktual, hijau = prediksi.
-Identitas seri tidak pernah bergantung warna saja — legend selalu ada.
+Dirender di server jadi PNG lewat ``st.pyplot`` — browser hanya menerima gambar,
+tanpa JavaScript, sehingga halaman ringan. Setiap figure dibuat dengan OO API
+``Figure`` (bukan ``plt`` global) agar tidak membocorkan memori di server.
+
+Palet: biru = aktual, hijau = prediksi. Label angka ditampilkan langsung pada
+chart agar nilai mudah dibaca tanpa interaksi.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from matplotlib.figure import Figure
 
-AKTUAL = "#2a78d6"
-PREDIKSI = "#008300"
-AKSEN = "#eb6834"
-ABU = "#52514e"
-GRID = "rgba(130,130,130,0.22)"
+# Tema gelap agar serasi dengan halaman hitam & angka tetap terbaca.
+BG = "#000000"          # latar chart: hitam
+FG = "#e8e8e8"          # teks utama: terang
+AKTUAL = "#3987e5"      # biru terang (aktual)
+PREDIKSI = "#33c02f"    # hijau terang (prediksi) — kontras di atas hitam
+AKSEN = "#ff7a45"       # oranye (aksen error/bias)
+ABU = "#a8a8a8"         # teks sekunder
+GRID = "#333333"        # grid halus
 
-_LAYOUT = dict(
-    template="plotly_white",
-    font=dict(family="Inter, system-ui, sans-serif", size=13),
-    margin=dict(l=56, r=24, t=52, b=48),
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title_text=""),
-    hoverlabel=dict(font_size=12, namelength=-1),
-)
-_AXIS = dict(
-    showgrid=True,
-    gridcolor=GRID,
-    zeroline=False,
-    linecolor=GRID,
-    title_font=dict(color=ABU, size=12),
-    tickfont=dict(color=ABU, size=11),
-)
+# Font sedikit lebih besar agar angka terbaca jelas pada gambar statis.
+_FONT = {"title": 13, "label": 11, "tick": 10, "value": 9.5}
 
 
-def _rapikan(fig: go.Figure, height: int = 400, **layout) -> go.Figure:
-    """Terapkan layout dasar yang konsisten."""
-    fig.update_layout(**_LAYOUT, height=height, **layout)
-    fig.update_xaxes(**_AXIS)
-    fig.update_yaxes(**_AXIS)
+def _bersih(ax) -> None:
+    """Rapikan sumbu: latar hitam, grid tipis, hilangkan spine berlebih."""
+    ax.set_facecolor(BG)
+    ax.grid(True, color=GRID, linewidth=0.8, alpha=0.9)
+    ax.set_axisbelow(True)
+    for sisi in ("top", "right"):
+        ax.spines[sisi].set_visible(False)
+    for sisi in ("left", "bottom"):
+        ax.spines[sisi].set_color(GRID)
+    ax.tick_params(colors=ABU, labelsize=_FONT["tick"], length=0)
+
+
+def _fig(figsize) -> Figure:
+    """Buat Figure berlatar hitam."""
+    fig = Figure(figsize=figsize, dpi=120)
+    fig.patch.set_facecolor(BG)
     return fig
 
 
-def _kosong(pesan: str) -> go.Figure:
+def _kosong(pesan: str) -> Figure:
     """Placeholder saat tidak ada data."""
-    fig = go.Figure()
-    fig.add_annotation(text=pesan, showarrow=False, font=dict(color=ABU, size=14))
-    fig.update_xaxes(visible=False)
-    fig.update_yaxes(visible=False)
-    fig.update_layout(height=240, template="plotly_white")
+    fig = _fig((7, 2.6))
+    ax = fig.subplots()
+    ax.set_facecolor(BG)
+    ax.text(0.5, 0.5, pesan, ha="center", va="center", color=ABU, fontsize=12)
+    ax.axis("off")
     return fig
 
 
-def plot_time_series(df: pd.DataFrame, stations: list[str]) -> go.Figure:
-    """Aktual vs prediksi terhadap waktu, satu panel per pos (maks. 4).
+def _label_batang_h(ax, nilai, ypos, fmt="{:.3f}", dx=None) -> None:
+    """Tulis nilai di ujung kanan tiap batang horizontal."""
+    lebar = ax.get_xlim()[1]
+    if dx is None:
+        dx = lebar * 0.01
+    for v, y in zip(nilai, ypos):
+        ax.text(v + dx, y, fmt.format(v), va="center", ha="left",
+                fontsize=_FONT["value"], color=ABU)
 
-    Small multiples dipakai agar warna selalu berarti "aktual vs prediksi"
-    dan tidak pernah di-cycle antarpos.
-    """
+
+# ---------------------------------------------------------------------------
+# Time series
+# ---------------------------------------------------------------------------
+
+
+def plot_time_series(df: pd.DataFrame, stations: list[str]) -> Figure:
+    """Aktual vs prediksi terhadap waktu, satu panel per pos (maks. 4)."""
     if df.empty or not stations:
         return _kosong("Pilih minimal satu pos.")
 
     stations = stations[:4]
     n = len(stations)
-    fig = make_subplots(rows=n, cols=1, shared_xaxes=True, subplot_titles=stations,
-                        vertical_spacing=0.12 / max(n - 1, 1) if n > 1 else 0.0)
+    fig = _fig((11, 2.5 * n + 0.4))
+    axes = fig.subplots(n, 1, sharex=True, squeeze=False)[:, 0]
 
-    for i, pos in enumerate(stations, start=1):
+    for ax, pos in zip(axes, stations):
         d = df[df["pos"] == pos].sort_values("waktu")
-        if d.empty:
-            continue
-        info = np.stack([d["pos"].astype(str), d["abs_error"]], axis=-1)
-        tip = (
-            "<b>%{customdata[0]}</b><br>%{x|%Y-%m-%d %H:%M}<br>"
-            "%{fullData.name}: %{y:.3f} m<br>Abs error: %{customdata[1]:.3f} m<extra></extra>"
-        )
-        for nama, kol, warna, garis in (
-            ("Aktual", "aktual", AKTUAL, "solid"),
-            ("Prediksi", "prediksi", PREDIKSI, "dot"),
-        ):
-            fig.add_trace(
-                go.Scatter(
-                    x=d["waktu"], y=d[kol], name=nama, legendgroup=nama,
-                    showlegend=(i == 1), mode="lines",
-                    line=dict(color=warna, width=2, dash=garis),
-                    customdata=info, hovertemplate=tip,
-                ),
-                row=i, col=1,
-            )
+        if not d.empty:
+            ax.plot(d["waktu"], d["aktual"], color=AKTUAL, lw=1.8, label="Aktual")
+            ax.plot(d["waktu"], d["prediksi"], color=PREDIKSI, lw=1.6,
+                    ls="--", label="Prediksi")
+        ax.set_title(str(pos), fontsize=_FONT["label"], color=ABU, loc="left", pad=4)
+        ax.set_ylabel("TMA (m)", fontsize=_FONT["label"], color=ABU)
+        _bersih(ax)
 
-    _rapikan(fig, height=max(280, 200 * n), hovermode="x unified")
-    for a in fig.layout.annotations:
-        a.update(font=dict(size=12, color=ABU), x=0, xanchor="left")
-    fig.update_yaxes(title_text="TMA (m)")
-    fig.update_xaxes(title_text="Waktu", row=n, col=1,
-                     rangeslider=dict(visible=True, thickness=0.05))
+    leg = axes[0].legend(loc="upper right", fontsize=_FONT["tick"], ncol=2,
+                         facecolor="#141414", edgecolor=GRID, labelcolor=FG)
+    leg.get_frame().set_alpha(0.95)
+    axes[-1].set_xlabel("Waktu", fontsize=_FONT["label"], color=ABU)
+    fig.autofmt_xdate(rotation=25, ha="right")
+    fig.tight_layout(pad=1.1)
     return fig
 
 
-def plot_station_metrics(per_pos: pd.DataFrame, metric: str = "rmse") -> go.Figure:
-    """Bar chart horizontal metrik per pos."""
+# ---------------------------------------------------------------------------
+# Metrik per pos
+# ---------------------------------------------------------------------------
+
+
+def plot_station_metrics(per_pos: pd.DataFrame, metric: str = "rmse") -> Figure:
+    """Bar chart horizontal metrik per pos, dengan label nilai di tiap batang."""
     if per_pos.empty:
         return _kosong("Belum ada metrik per pos.")
 
     d = per_pos.sort_values(metric)
-    fig = go.Figure(
-        go.Bar(
-            x=d[metric], y=d["nama_pos"], orientation="h",
-            marker=dict(color=AKTUAL, line=dict(color="rgba(252,252,251,1)", width=2)),
-            customdata=np.stack([d["n_obs"], d["mae"], d["rmse"]], axis=-1),
-            hovertemplate=("<b>%{y}</b><br>RMSE: %{customdata[2]:.4f} m<br>"
-                           "MAE: %{customdata[1]:.4f} m<br>Obs: %{customdata[0]:,}<extra></extra>"),
-            text=d[metric].map("{:.3f}".format), textposition="outside", cliponaxis=False,
-        )
-    )
-    _rapikan(fig, height=max(320, 24 * len(d) + 110), showlegend=False, bargap=0.35,
-             title=dict(text=f"{metric.upper()} per pos", font=dict(size=15)))
-    fig.update_xaxes(title_text=f"{metric.upper()} (m)")
-    fig.update_yaxes(title_text=None, showgrid=False)
+    y = np.arange(len(d))
+    fig = _fig((7.2, 0.32 * len(d) + 1.3))
+    ax = fig.subplots()
+
+    ax.barh(y, d[metric], color=AKTUAL, height=0.68, edgecolor=BG, linewidth=0.6)
+    ax.set_yticks(y)
+    ax.set_yticklabels(d["nama_pos"], fontsize=_FONT["tick"])
+    ax.set_xlim(0, float(d[metric].max()) * 1.16)
+    ax.set_xlabel(f"{metric.upper()} (m)", fontsize=_FONT["label"], color=ABU)
+    ax.set_title(f"{metric.upper()} per pos", fontsize=_FONT["title"],
+                 color=FG, loc="left", pad=8, fontweight="bold")
+    _bersih(ax)
+    ax.grid(axis="y", visible=False)
+    _label_batang_h(ax, d[metric].to_numpy(), y, fmt="{:.4f}")
+    fig.tight_layout(pad=1.0)
     return fig
 
 
-def plot_actual_vs_prediction(df: pd.DataFrame, max_points: int = 20_000) -> go.Figure:
-    """Scatter aktual vs prediksi dengan garis referensi ideal y = x."""
+# ---------------------------------------------------------------------------
+# Aktual vs prediksi
+# ---------------------------------------------------------------------------
+
+
+def plot_actual_vs_prediction(df: pd.DataFrame, max_points: int = 20_000) -> Figure:
+    """Scatter aktual vs prediksi + garis ideal y = x + kotak ringkasan RMSE/MAE."""
     if df.empty:
         return _kosong("Tidak ada data.")
 
     d = df.sample(max_points, random_state=42) if len(df) > max_points else df
-    lo = float(min(d["aktual"].min(), d["prediksi"].min()))
-    hi = float(max(d["aktual"].max(), d["prediksi"].max()))
+    a = d["aktual"].to_numpy(); p = d["prediksi"].to_numpy()
+    lo = float(min(a.min(), p.min())); hi = float(max(a.max(), p.max()))
     pad = (hi - lo) * 0.04 or 0.1
+    rmse = float(np.sqrt(np.mean((a - p) ** 2))); mae = float(np.mean(np.abs(a - p)))
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=[lo - pad, hi + pad], y=[lo - pad, hi + pad], mode="lines",
-                             name="Prediksi sempurna (y = x)",
-                             line=dict(color=ABU, width=2, dash="dash"), hoverinfo="skip"))
-    fig.add_trace(go.Scatter(
-        x=d["aktual"], y=d["prediksi"], mode="markers", name="Observasi",
-        marker=dict(size=8, color=AKTUAL, opacity=0.5,
-                    line=dict(width=1, color="rgba(252,252,251,0.9)")),
-        customdata=np.stack([d["pos"].astype(str), d["abs_error"]], axis=-1),
-        hovertemplate=("<b>%{customdata[0]}</b><br>Aktual: %{x:.3f} m<br>"
-                       "Prediksi: %{y:.3f} m<br>Abs error: %{customdata[1]:.3f} m<extra></extra>"),
-    ))
-    judul = f"Aktual vs prediksi ({len(d):,} titik"
-    judul += f", disampel dari {len(df):,})" if len(d) < len(df) else ")"
-    _rapikan(fig, height=440, title=dict(text=judul, font=dict(size=15)))
-    fig.update_xaxes(title_text="Aktual (m)", range=[lo - pad, hi + pad])
-    fig.update_yaxes(title_text="Prediksi (m)", range=[lo - pad, hi + pad],
-                     scaleanchor="x", scaleratio=1)
+    fig = _fig((6.4, 5.4))
+    ax = fig.subplots()
+    ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=ABU, lw=1.6,
+            ls="--", label="Prediksi sempurna (y = x)")
+    ax.scatter(a, p, s=14, color=AKTUAL, alpha=0.4, edgecolor="none", label="Observasi")
+
+    ax.set_title("Aktual vs prediksi", fontsize=_FONT["title"], color=FG,
+                 loc="left", pad=8, fontweight="bold")
+    ax.set_xlabel("Aktual (m)", fontsize=_FONT["label"], color=ABU)
+    ax.set_ylabel("Prediksi (m)", fontsize=_FONT["label"], color=ABU)
+    ax.set_xlim(lo - pad, hi + pad); ax.set_ylim(lo - pad, hi + pad)
+    ax.set_aspect("equal", adjustable="box")
+    _bersih(ax)
+    leg = ax.legend(loc="lower right", fontsize=_FONT["tick"],
+                    facecolor="#141414", edgecolor=GRID, labelcolor=FG)
+    leg.get_frame().set_alpha(0.95)
+    catatan = f"RMSE = {rmse:.4f} m\nMAE  = {mae:.4f} m\n{len(d):,} titik"
+    if len(d) < len(df):
+        catatan += f" (dari {len(df):,})"
+    ax.text(0.03, 0.97, catatan, transform=ax.transAxes, va="top", ha="left",
+            fontsize=_FONT["label"], color=FG,
+            bbox=dict(boxstyle="round,pad=0.4", fc="#141414", ec=GRID, alpha=0.95))
+    fig.tight_layout(pad=1.0)
     return fig
 
 
-def plot_residual_distribution(df: pd.DataFrame) -> go.Figure:
-    """Histogram residual (aktual - prediksi)."""
+# ---------------------------------------------------------------------------
+# Residual
+# ---------------------------------------------------------------------------
+
+
+def plot_residual_distribution(df: pd.DataFrame) -> Figure:
+    """Histogram residual (aktual - prediksi) dengan garis nol & garis bias."""
     if df.empty:
         return _kosong("Tidak ada data residual.")
 
-    fig = go.Figure(go.Histogram(
-        x=df["residual"], nbinsx=60, name="Residual",
-        marker=dict(color=AKTUAL, line=dict(color="rgba(252,252,251,1)", width=1)),
-        hovertemplate="Residual: %{x:.3f} m<br>Jumlah: %{y:,}<extra></extra>",
-    ))
-    rata = float(df["residual"].mean())
-    fig.add_vline(x=0, line=dict(color="rgba(130,130,130,0.55)", width=2, dash="dash"))
-    fig.add_vline(x=rata, line=dict(color=AKSEN, width=2),
-                  annotation_text=f"Bias {rata:+.3f} m", annotation_position="top right",
-                  annotation_font=dict(size=11, color=AKSEN))
-    _rapikan(fig, height=380, showlegend=False, bargap=0.02,
-             title=dict(text="Distribusi residual (aktual - prediksi)", font=dict(size=15)))
-    fig.update_xaxes(title_text="Residual (m)")
-    fig.update_yaxes(title_text="Jumlah observasi")
+    r = df["residual"].to_numpy()
+    rata = float(r.mean()); std = float(r.std())
+    fig = _fig((6.4, 4.6))
+    ax = fig.subplots()
+    ax.hist(r, bins=60, color=AKTUAL, edgecolor=BG, linewidth=0.4)
+    ax.axvline(0, color=ABU, lw=1.6, ls="--")
+    ax.axvline(rata, color=AKSEN, lw=2.0)
+
+    ymax = ax.get_ylim()[1]
+    ax.text(rata, ymax * 0.96, f" bias {rata:+.3f} m", color=AKSEN,
+            fontsize=_FONT["label"], va="top", ha="left", fontweight="bold")
+    ax.set_title("Distribusi residual (aktual - prediksi)", fontsize=_FONT["title"],
+                 color=FG, loc="left", pad=8, fontweight="bold")
+    ax.set_xlabel("Residual (m)", fontsize=_FONT["label"], color=ABU)
+    ax.set_ylabel("Jumlah observasi", fontsize=_FONT["label"], color=ABU)
+    _bersih(ax)
+    ax.text(0.97, 0.97, f"mean {rata:+.3f} m\nstd  {std:.3f} m",
+            transform=ax.transAxes, va="top", ha="right", fontsize=_FONT["tick"],
+            color=ABU,
+            bbox=dict(boxstyle="round,pad=0.35", fc="#141414", ec=GRID, alpha=0.95))
+    fig.tight_layout(pad=1.0)
     return fig
 
 
-def plot_top_errors(top: pd.DataFrame) -> go.Figure:
-    """Bar chart absolute error terbesar."""
+# ---------------------------------------------------------------------------
+# Top error
+# ---------------------------------------------------------------------------
+
+
+def plot_top_errors(top: pd.DataFrame) -> Figure:
+    """Bar chart absolute error terbesar, dengan label nilai di tiap batang."""
     if top.empty:
         return _kosong("Tidak ada data error.")
 
     d = top.copy()
     if "waktu" in d.columns and d["waktu"].notna().any():
-        label = d["pos"].astype(str) + " · " + pd.to_datetime(d["waktu"]).dt.strftime("%d %b %y %H:%M")
+        label = (d["pos"].astype(str) + " · "
+                 + pd.to_datetime(d["waktu"]).dt.strftime("%d %b %y %H:%M"))
     else:
         label = d["id"].astype(str)
     d = d.assign(label=label).sort_values("abs_error")
+    y = np.arange(len(d))
 
-    fig = go.Figure(go.Bar(
-        x=d["abs_error"], y=d["label"], orientation="h",
-        marker=dict(color=AKSEN, line=dict(color="rgba(252,252,251,1)", width=2)),
-        customdata=np.stack([d["aktual"], d["prediksi"]], axis=-1),
-        hovertemplate=("<b>%{y}</b><br>Abs error: %{x:.3f} m<br>Aktual: %{customdata[0]:.3f} m"
-                       "<br>Prediksi: %{customdata[1]:.3f} m<extra></extra>"),
-        text=d["abs_error"].map("{:.2f}".format), textposition="outside", cliponaxis=False,
-    ))
-    _rapikan(fig, height=max(320, 30 * len(d) + 100), showlegend=False, bargap=0.35,
-             title=dict(text=f"{len(d)} absolute error terbesar", font=dict(size=15)))
-    fig.update_xaxes(title_text="Absolute error (m)")
-    fig.update_yaxes(title_text=None, showgrid=False)
+    fig = _fig((8.6, 0.42 * len(d) + 1.3))
+    ax = fig.subplots()
+    ax.barh(y, d["abs_error"], color=AKSEN, height=0.66, edgecolor=BG, linewidth=0.6)
+    ax.set_yticks(y)
+    ax.set_yticklabels(d["label"], fontsize=_FONT["tick"])
+    ax.set_xlim(0, float(d["abs_error"].max()) * 1.14)
+    ax.set_xlabel("Absolute error (m)", fontsize=_FONT["label"], color=ABU)
+    ax.set_title(f"{len(d)} absolute error terbesar", fontsize=_FONT["title"],
+                 color=FG, loc="left", pad=8, fontweight="bold")
+    _bersih(ax)
+    ax.grid(axis="y", visible=False)
+    _label_batang_h(ax, d["abs_error"].to_numpy(), y, fmt="{:.3f}")
+    fig.tight_layout(pad=1.0)
     return fig

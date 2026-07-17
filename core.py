@@ -277,18 +277,18 @@ def _stable_seed(seed: int, teks: str) -> int:
     return (seed + zlib.crc32(teks.encode("utf-8"))) & 0xFFFFFFFF
 
 
-# Empat metode split public-private yang dapat dipilih.
+# Empat metode split public-private (urutan = urutan tampil; pertama = default).
 SPLIT_METHODS = {
+    "random_global": "Random — seed 42 (global) · default kaggle",
+    "random_pos": "Random — seed 42 tiap pos",
     "chrono_global": "Kronologis — 30% data paling awal (global)",
     "chrono_pos": "Kronologis — 30% paling awal tiap pos",
-    "random_global": "Random — seed 42 (global)",
-    "random_pos": "Random — seed 42 tiap pos",
 }
 
 
 def create_public_private_split(
     df: pd.DataFrame,
-    method: str = "chrono_global",
+    method: str = "random_global",
     public_ratio: float = PUBLIC_RATIO,
     seed: int = 42,
 ) -> pd.DataFrame:
