@@ -16,6 +16,10 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 PUBLIC_RATIO = 0.30
 
+# Nilai prediksi dari submission dibulatkan ke sekian angka di belakang koma
+# saat dibaca (submission kompetisi hanya bermakna sampai 2 desimal).
+PRED_DECIMALS = 2
+
 # Pemisah composite id: "<datetime> - <nama_pos>".
 # nama_pos sendiri boleh mengandung " - " (mis. "Arjowinangun - Pacitan"),
 # sehingga pemecahan dibatasi pada kemunculan pertama saja.
@@ -197,7 +201,8 @@ def merge_ground_truth_submission(
     kanan = pd.DataFrame(
         {
             "id": sub[id_sub].astype(str).str.strip(),
-            "prediksi": pd.to_numeric(sub[pred_col], errors="coerce"),
+            # Prediksi dibulatkan ke PRED_DECIMALS angka di belakang koma.
+            "prediksi": pd.to_numeric(sub[pred_col], errors="coerce").round(PRED_DECIMALS),
         }
     ).drop_duplicates(subset="id", keep="first")
 

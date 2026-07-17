@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from core import (
+    PRED_DECIMALS,
     PUBLIC_RATIO,
     SPLIT_METHODS,
     calculate_metrics,
@@ -232,7 +233,8 @@ a.dataframe(gt_df.head(5), width="stretch", hide_index=True)
 b.caption(f"**Submission** · `{f_sub.name}` — {len(sub_df):,} baris × {len(sub_df.columns)} kolom")
 b.dataframe(sub_df.head(5), width="stretch", hide_index=True)
 st.caption(f"Kolom terdeteksi — identifier: `{id_gt}` / `{id_sub}` · "
-           f"aktual: `{col_aktual}` · prediksi: `{col_pred}`")
+           f"aktual: `{col_aktual}` · prediksi: `{col_pred}` · "
+           f"nilai prediksi dibaca {PRED_DECIMALS} angka di belakang koma")
 
 data = gabung(gt_df, sub_df, id_gt, id_sub, col_aktual, col_pred)
 if data.empty:
