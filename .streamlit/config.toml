@@ -1,0 +1,14 @@
+# Konfigurasi Streamlit untuk deployment.
+# Streamlit Community Cloud mengelola port & headless sendiri, jadi di sini
+# hanya tema dan batas upload.
+
+[theme]
+primaryColor = "#2a78d6"
+base = "light"
+
+[server]
+# Batas ukuran file upload (MB). Submission kompetisi biasanya < 5 MB.
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false

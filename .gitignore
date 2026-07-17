@@ -1,0 +1,25 @@
+# Virtual environment (JANGAN di-commit — 600+ MB)
+.venv/
+venv/
+env/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Data mentah kompetisi (opsional — jangan commit jika besar/sensitif).
+# Hapus dua baris ini bila ingin menyertakan file tersebut di repo.
+test.csv
+train.csv
